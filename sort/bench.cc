@@ -1,13 +1,9 @@
 #include <benchmark/benchmark.h>
 #include <chrono>
-#include "Exp.hh"
+#include <random>
+#include "Sample.hh"
 
 namespace {
-
-unsigned long ceil(unsigned long x, unsigned long y) {
-	return 1 + (x - 1) / y;
-}
-
 // This reporter does nothing.
 // We can use it to disable output from all but the root process
 class NullReporter : public ::benchmark::BenchmarkReporter {
@@ -29,36 +25,31 @@ double getTime(auto start, auto end) {
 }//namespace
 
 
-static void BM_exp(benchmark::State& state) {
+static void BM_MPISort(benchmark::State& state) {
     int Rank, CommSize;
     MPI_Comm_size(MPI_COMM_WORLD, &CommSize);
     MPI_Comm_rank(MPI_COMM_WORLD, &Rank);
+    std::random_device rd;
+    std::mt19937 g(rd());
     for (auto _ : state) {
-        auto n = state.range(0);
-        using mpf_float = boost::multiprecision::mpf_float;
-        mpf_float::default_precision(n * std::numbers::ln10 / std::numbers::ln2);
-
+        auto Size = state.range(0);
+        const auto AvgSize = MPI::ceil(Size, CommSize);
+        const auto WlSize = std::min(AvgSize,
+                                     Size - Rank * AvgSize);
+        std::vector<int> Workload(WlSize);
+        std::iota(Workload.begin(), Workload.end(), Rank * AvgSize);
+        std::shuffle(Workload.begin(), Workload.end(), g);
         auto start = std::chrono::high_resolution_clock::now();
-
-        using namespace mpi_exp;
-        auto k = translateNDigsToNSumm(n);
-        auto WorkSize = ceil(k, CommSize);
-        auto ExpPart = Exp<mpz_int>::binSplit(WorkSize * Rank, std::min(WorkSize * (Rank + 1), k));
-
-        auto endLocal = std::chrono::high_resolution_clock::now();
-
-        auto ExpWout1 = collectExp(ExpPart, Rank, CommSize);
-        benchmark::DoNotOptimize(ExpWout1.get<mpf_float>());
-
+        auto [Res, ResSz] = MPI::sampleSort(Workload.begin(), Workload.end(), CommSize);
         auto end = std::chrono::high_resolution_clock::now();
-
+        const auto ResBegin = Res.get();
+        const auto ResEnd = ResBegin + ResSz;
+        assert(std::is_sorted(ResBegin, ResEnd));
         state.SetIterationTime(getTime(start, end));
-        state.counters["LocalWork Time"] = getTime(start, endLocal);
-        state.counters["Reduce Time"] = getTime(endLocal, end);
     }
     state.SetComplexityN(state.range(0));
 }
-BENCHMARK(BM_exp)->Range(1<<14, 1<<24)->Complexity()->UseManualTime()->Unit(benchmark::kMillisecond);;
+BENCHMARK(BM_MPISort)->Range(1<<10, 1<<26)->Complexity()->UseManualTime()->Unit(benchmark::kMillisecond);;
 
 int main(int argc, char **argv) {
   MPI_Init(&argc, &argv);

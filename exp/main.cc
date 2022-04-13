@@ -26,7 +26,7 @@ int main(int argc, char **argv) {
     
     auto k = translateNDigsToNSumm(n);
     auto WorkSize = ceil(k, CommSize);
-    auto ExpPart = Exp<mpz_int>::binSplit(WorkSize * Rank, WorkSize * (Rank + 1));
+    auto ExpPart = Exp<mpz_int>::binSplit(WorkSize * Rank, std::min(WorkSize * (Rank + 1), k));
     auto ExpWout1 = collectExp(ExpPart, Rank, CommSize);
     
     mpf_float::default_precision(n * std::numbers::ln10 / std::numbers::ln2);
